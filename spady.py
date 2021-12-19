@@ -31,6 +31,10 @@ def changeName( name ):
         name = name.replace(old, new)
     return name
 
+def suburban_Praha( name ):
+    if name in [ 'Libeň', 'Kobylisy',  'Čimice', 'Bohnice', 'Karlín', 'Michle', 'Nusle', 'Podolí', 'Braník','Hodkovičky', 'Krč', 'Lhotka', 'Záběhlice' ]: return True
+    else: return False
+
 # Use file from https://geoportal.cuzk.cz/Default.aspx?mode=TextMeta&side=dsady_RUIAN&metadataID=CZ-CUZK-SH-V&mapid=5&menu=252
 geo_df = gpd.read_file('JTSK/SPH_OKRES.shp')
 geo_df = geo_df.head(13)
@@ -40,11 +44,13 @@ dist = 100_000
 # Use file from https://geoportal.cuzk.cz/Default.aspx?mode=TextMeta&side=mapy_data200&metadataID=CZ-CUZK-DATA200-VODSTVO-V&head_tab=sekce-02-gp&menu=2292
 reky   = gpd.read_file('HYDRO/WatrcrsL.shp')
 berounka = reky.loc[ reky['NAMN1'] == 'Berounka' ].reset_index(drop = True)
+crs = {'init': 'epsg:5514'}
+berounka.crs = crs
 
 lgd_kwds = {
         'title': 'Primární spády\niktových center\nv Praze a Středních\nČechách',
         'loc': 'upper left',
-        'bbox_to_anchor': (0.75, 1.00),
+        'bbox_to_anchor': (0.9, 1.00),
         'ncol': 1
         }
 
@@ -52,6 +58,10 @@ mc = gpd.read_file('JTSK/SPH_MC.shp')
 mc['praha'] = mc['NAZEV_MC'].apply(lambda x: 'Praha' in x)
 praha = mc.loc[ mc['praha'] ]
 praha['NAZEV_MC'] = praha['NAZEV_MC'].apply(lambda x: x.replace("Praha-", "") )
+
+sub_praha = gpd.read_file('JTSK/SPH_KU.shp')
+sub_praha['suburban'] = sub_praha['NAZEV_KU'].apply(suburban_Praha)
+sub_praha = sub_praha.loc[ sub_praha['suburban'] ].reset_index( drop = True )
 
 query = """SELECT ?okres ?okresLabel ?coordinates ?nemocnice ?population {
   VALUES (?okres ?nemocnice) {
@@ -156,7 +166,8 @@ query = """SELECT ?okres ?okresLabel ?coordinates ?nemocnice ?population {
 
     (wd:Q837635 "Kladno") #Kladno
     (wd:Q338296 "Kladno") #Kladno
-    (wd:Q852463 "Kladno/ Mladá Boleslav") #Mělník
+    (wd:Q852463 "Kladno/Mladá Boleslav") #okres Mělník
+    (wd:Q320939 "Mladá Boleslav") #město Mělník
     (wd:Q852468 "Mladá Boleslav") #Mladá Boleslav
     (wd:Q852491 "Kolín") #Nymburk
     (wd:Q847318 "Kolín") #Kolín
@@ -179,7 +190,29 @@ df['coord'] = df['coordinates'].apply( lambda c: getCoord.search(c).groups() )
 df['lon'] = [ float(coord[0]) for coord in df['coord'] ]
 df['lat'] = [ float(coord[1]) for coord in df['coord'] ]
 df['NAZEV_MC'] = df['okresLabel'].apply(changeName)
+melnik = df.loc[ df['okresLabel'] == 'Mělník' ].reset_index( drop = True )
+df = df.loc[ df['okresLabel'] != 'Mělník' ]
 df['okres'] = df['okresLabel'].apply(lambda x: 'okres' in x)
+
+melnik['geometry'] = melnik[['lon', 'lat']].apply( lambda row: wgs84_to_Point(row['lon'], row['lat'] ), axis = 1)
+melnik = gpd.GeoDataFrame(melnik, geometry = 'geometry')
+p0 = melnik['geometry'].values[0]
+melnik_polygon = Polygon([
+    (p0.x + 0*dist, p0.y + 1*dist),
+    (p0.x + 1*dist, p0.y + 1*dist),
+    (p0.x + 1*dist, p0.y - 1*dist),
+    (p0.x + 0*dist, p0.y - 1*dist),
+    ])
+melnik_box = gpd.GeoSeries([melnik_polygon])
+okres_melnik = geo_df.loc[ geo_df['NAZEV_LAU1'] == 'Mělník' ].reset_index( drop = True )
+okres_melnik_zapad = okres_melnik.copy()
+okres_melnik_zapad['geometry'] = okres_melnik.difference(melnik_box)
+okres_melnik_zapad['NAZEV_LAU1'] = 'Mělník (západ)'
+okres_melnik_zapad['nemocnice'] = 'Kladno'
+okres_melnik_vychod = okres_melnik.copy()
+okres_melnik_vychod['geometry'] = okres_melnik.intersection(melnik_box)
+okres_melnik_vychod['NAZEV_LAU1'] = 'Mělník (východ)'
+okres_melnik_vychod['nemocnice'] = 'Mladá Boleslav'
 
 uvaly = df.loc[ df['okresLabel'] == 'Úvaly' ]
 uvaly['geometry'] = uvaly[['lon', 'lat']].apply( lambda row: wgs84_to_Point(row['lon'], row['lat'] ), axis=1)
@@ -203,6 +236,7 @@ praha_vychod_jih['NAZEV_LAU1'] = 'Praha-východ (jih)'
 praha_vychod_jih['nemocnice'] = 'FNKV'
 
 praha_zapad = geo_df.loc[ geo_df['NAZEV_LAU1'] == 'Praha-západ'].reset_index(drop = True )
+praha_zapad.crs = crs
 berounka_intersect = gpd.sjoin( berounka, praha_zapad, op='intersects').reset_index(drop = True )
 berounka_x, berounka_y = [], []
 for i in [ 7, 8, 4, 5, 6, 2, 1, 0, 3 ]:
@@ -221,11 +255,21 @@ praha_zapad_jih['geometry'] = praha_zapad.intersection(berounka_box)
 praha_zapad_jih['NAZEV_LAU1'] = 'Praha-západ (jih)'
 praha_zapad_jih['nemocnice'] = 'VFN'
 
-okresy = df.loc[ df['okres'] ]
-okresy['NAZEV_LAU1'] = okresy['okresLabel'].apply(lambda x: x.replace("okres ", "") )
-okresym = geo_df.merge(okresy, on='NAZEV_LAU1')
+#okresy = df.loc[ df['okres'] ]
+#okresy['NAZEV_LAU1'] = okresy['okresLabel'].apply(lambda x: x.replace("okres ", "") )
+#okresym = geo_df.merge(okresy, on='NAZEV_LAU1')
+df['NAZEV_LAU1'] = df['okresLabel'].apply(lambda x: x.replace("okres ", "") )
+okresym = geo_df.merge(df, on='NAZEV_LAU1')
+
+df['NAZEV_KU'] = df['okresLabel']
+suburbs = sub_praha.merge(df, on='NAZEV_KU')
+
+ax = okresym.boundary.plot(color = 'black', linewidth = 0.75, alpha = 1)
+
 okresym = pd.concat( [
-    okresym.loc[ (okresym['NAZEV_LAU1'] != 'Praha-východ') & (okresym['NAZEV_LAU1'] != 'Praha-západ') ],
+    okresym.loc[ (okresym['NAZEV_LAU1'] != 'Praha-východ') & (okresym['NAZEV_LAU1'] != 'Praha-západ') & (okresym['NAZEV_LAU1'] != 'Mělník') ],
+    okres_melnik_zapad,
+    okres_melnik_vychod,
     praha_vychod_sever,
     praha_vychod_jih,
     praha_zapad_sever,
@@ -233,7 +277,16 @@ okresym = pd.concat( [
     ])
 praham = praha.merge(df, on='NAZEV_MC', how='left')
 
-ax = okresym.plot(column = 'nemocnice', legend = True, legend_kwds = lgd_kwds )
-praham.plot(ax = ax, column = 'nemocnice', legend = True, legend_kwds = lgd_kwds )
+pd.concat([
+    okresym[['nemocnice', 'geometry']],
+    praham[['nemocnice', 'geometry']],
+    suburbs[['nemocnice', 'geometry']],
+    ]).plot(
+            column = 'nemocnice',
+            legend = True,
+            legend_kwds = lgd_kwds,
+            ax = ax
+            )
+ax.set_axis_off()
 plt.savefig('spady.png')
 plt.show()
