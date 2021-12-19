@@ -32,7 +32,7 @@ def changeName( name ):
     return name
 
 def suburban_Praha( name ):
-    if name in [ 'Libeň', 'Kobylisy',  'Čimice', 'Bohnice', 'Karlín', 'Michle', 'Nusle', 'Podolí', 'Braník','Hodkovičky', 'Krč', 'Lhotka', 'Záběhlice' ]: return True
+    if name in [ 'Libeň', 'Kobylisy',  'Čimice', 'Bohnice', 'Karlín', 'Michle', 'Nusle', 'Podolí', 'Braník','Hodkovičky', 'Krč', 'Lhotka', 'Záběhlice', 'Střížkov', 'Troja' ]: return True
     else: return False
 
 # Use file from https://geoportal.cuzk.cz/Default.aspx?mode=TextMeta&side=dsady_RUIAN&metadataID=CZ-CUZK-SH-V&mapid=5&menu=252
@@ -261,7 +261,7 @@ praha_zapad_jih['nemocnice'] = 'VFN'
 df['NAZEV_LAU1'] = df['okresLabel'].apply(lambda x: x.replace("okres ", "") )
 okresym = geo_df.merge(df, on='NAZEV_LAU1')
 
-df['NAZEV_KU'] = df['okresLabel']
+df['NAZEV_KU'] = df['okresLabel'].apply( changeName )
 suburbs = sub_praha.merge(df, on='NAZEV_KU')
 
 ax = okresym.boundary.plot(color = 'black', linewidth = 0.75, alpha = 1)
